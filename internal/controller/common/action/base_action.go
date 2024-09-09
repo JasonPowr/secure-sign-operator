@@ -13,6 +13,7 @@ import (
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	client2 "sigs.k8s.io/controller-runtime/pkg/client"
@@ -89,6 +90,20 @@ func (action *BaseAction) Requeue() *Result {
 	}
 }
 
+func (action *BaseAction) Update(ctx context.Context, key types.NamespacedName, currentObj client2.Object, obj client2.Object) (bool, error) {
+	action.Logger.Info("Updating object",
+		"kind", reflect.TypeOf(currentObj).Elem().Name(), "Namespace", key.Namespace, "Name", key.Name)
+	if err := action.Client.Update(ctx, currentObj); err != nil {
+		if strings.Contains(err.Error(), OptimisticLockErrorMsg) {
+			return action.Ensure(ctx, obj)
+		}
+		action.Logger.Error(err, "Failed to update object",
+			"kind", reflect.TypeOf(obj).Elem().Name(), "Namespace", key.Namespace, "Name", key.Name)
+		return false, err
+	}
+	return true, nil
+}
+
 func (action *BaseAction) Ensure(ctx context.Context, obj client2.Object) (bool, error) {
 	key := client2.ObjectKeyFromObject(obj)
 	var (
@@ -96,7 +111,7 @@ func (action *BaseAction) Ensure(ctx context.Context, obj client2.Object) (bool,
 		ok         bool
 	)
 	if currentObj, ok = obj.DeepCopyObject().(client2.Object); !ok {
-		return false, errors.New("Can't create DeepCopy object")
+		return false, errors.New("can't create DeepCopy object")
 	}
 	if err := action.Client.Get(ctx, key, currentObj); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -125,6 +140,16 @@ func (action *BaseAction) Ensure(ctx context.Context, obj client2.Object) (bool,
 		}
 	}
 
+	// Check if labels need updating
+	if !reflect.DeepEqual(currentObj.GetLabels(), obj.GetLabels()) {
+		currentObj.SetLabels(obj.GetLabels())
+		action.Logger.Info("Updating labels",
+			"kind", reflect.TypeOf(obj).Elem().Name(), "Namespace", key.Namespace, "Name", key.Name)
+		if ok, err := action.Update(ctx, key, currentObj, obj); !ok || err != nil {
+			return false, err
+		}
+	}
+
 	currentSpec := reflect.ValueOf(currentObj).Elem().FieldByName("Spec")
 	expectedSpec := reflect.ValueOf(obj).Elem().FieldByName("Spec")
 	if currentSpec == reflect.ValueOf(nil) {
@@ -132,6 +157,20 @@ func (action *BaseAction) Ensure(ctx context.Context, obj client2.Object) (bool,
 		// return without update
 		return false, nil
 	}
+
+	//Handle Reconcilliation of RouteSelectorLabels
+	currentRouteSelectorLabels, expectedRouteSelectorLabels := getRouteSelectorLabels(currentSpec, expectedSpec)
+	if expectedRouteSelectorLabels.IsValid() && currentRouteSelectorLabels.IsValid() {
+		if currentRouteSelectorLabels.CanSet() && currentRouteSelectorLabels.Type() == expectedRouteSelectorLabels.Type() &&
+			!equality.Semantic.DeepEqual(currentRouteSelectorLabels.Interface(), expectedRouteSelectorLabels.Interface()) {
+			currentRouteSelectorLabels.Set(expectedRouteSelectorLabels)
+			action.Logger.Info("Updating labels", "kind", reflect.TypeOf(obj).Elem().Name(), "Namespace", key.Namespace, "Name", key.Name)
+			if ok, err := action.Update(ctx, key, currentObj, obj); !ok || err != nil {
+				return false, err
+			}
+		}
+	}
+
 	if !expectedSpec.IsValid() || !currentSpec.IsValid() {
 		return false, errors.New("spec is not valid")
 	}
@@ -143,15 +182,34 @@ func (action *BaseAction) Ensure(ctx context.Context, obj client2.Object) (bool,
 		return false, errors.New("can't set expected spec to current object")
 	}
 	currentSpec.Set(expectedSpec)
-	action.Logger.Info("Updating object",
-		"kind", reflect.TypeOf(currentObj).Elem().Name(), "Namespace", key.Namespace, "Name", key.Name)
-	if err := action.Client.Update(ctx, currentObj); err != nil {
-		if strings.Contains(err.Error(), OptimisticLockErrorMsg) {
-			return action.Ensure(ctx, obj)
+	return action.Update(ctx, key, currentObj, obj)
+}
+
+func getRouteSelectorLabels(currentSpec, expectedSpec reflect.Value) (reflect.Value, reflect.Value) {
+	var currentRouteSelectorLabels, expectedRouteSelectorLabels reflect.Value
+	getRouteSelectorLabels := func(spec reflect.Value, fieldName string) reflect.Value {
+		if field := spec.FieldByName(fieldName); field.IsValid() {
+			if routeSelectorLabels := field.FieldByName("RouteSelectorLabels"); routeSelectorLabels.IsValid() {
+				return routeSelectorLabels
+			}
 		}
-		action.Logger.Error(err, "Failed to update object",
-			"kind", reflect.TypeOf(obj).Elem().Name(), "Namespace", key.Namespace, "Name", key.Name)
-		return false, err
+		return reflect.Value{}
 	}
-	return true, nil
+
+	// Handle Rekor and rekor search ui
+	currentRekorLabels := getRouteSelectorLabels(currentSpec, "RekorSearchUI")
+	expectedRekorLabels := getRouteSelectorLabels(expectedSpec, "RekorSearchUI")
+	if currentRekorLabels.IsValid() && expectedRekorLabels.IsValid() {
+		if !equality.Semantic.DeepEqual(currentRekorLabels.Interface(), expectedRekorLabels.Interface()) {
+			currentRouteSelectorLabels = currentRekorLabels
+			expectedRouteSelectorLabels = expectedRekorLabels
+		}
+	}
+
+	//Handle the rest
+	if !currentRouteSelectorLabels.IsValid() && !expectedRouteSelectorLabels.IsValid() {
+		currentRouteSelectorLabels = getRouteSelectorLabels(currentSpec, "ExternalAccess")
+		expectedRouteSelectorLabels = getRouteSelectorLabels(expectedSpec, "ExternalAccess")
+	}
+	return currentRouteSelectorLabels, expectedRouteSelectorLabels
 }
