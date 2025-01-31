@@ -1,8 +1,8 @@
 package constants
 
 var (
-	TrillianLogSignerImage = "registry.redhat.io/rhtas/trillian-logsigner-rhel9@sha256:b59fc4f905a9ce40e4a8a1a87a48412619ee888c25d0306f5d6a1a2200929ab8"
-	TrillianServerImage    = "registry.redhat.io/rhtas/trillian-logserver-rhel9@sha256:4c7917f49bf42990a5cc3dd32f88ec202d131ab92f5d549625a7369183101e47"
+	TrillianLogSignerImage = "registry.redhat.io/rhtas/trillian-logsigner-rhel9@sha256:998abef9c55c890b2e9f81ff7877fbf3b22b128666f9b66966f72546540c9ca6"
+	TrillianServerImage    = "registry.redhat.io/rhtas/trillian-logserver-rhel9@sha256:3105986e8dabfb23f53a2097192c7e80ce0424fa9394179c6000f05c19bd4255"
 	TrillianDbImage        = "registry.redhat.io/rhtas/trillian-database-rhel9@sha256:501612745e63e5504017079388bec191ffacf00ffdebde7be6ca5b8e4fd9d323"
 
 	// TODO: remove and check the DB pod status
@@ -21,7 +21,7 @@ var (
 
 	HttpServerImage = "registry.access.redhat.com/ubi9/httpd-24@sha256:7874b82335a80269dcf99e5983c2330876f5fe8bdc33dc6aa4374958a2ffaaee"
 
-	SegmentBackupImage      = "registry.redhat.io/rhtas/segment-reporting-rhel9@sha256:1596b0302833e72c29089d89243674180af0f164b99fd88c1d7fb00dc976c848"
+	SegmentBackupImage      = "registry.redhat.io/rhtas/segment-reporting-rhel9@sha256:5436e5ee4c99c537816d976c1adc850b5155236ed4fc9e5645ae160b9b381929"
 	TimestampAuthorityImage = "registry.redhat.io/rhtas/timestamp-authority-rhel9@sha256:fce0a22c8872309554236bab3457715dda0a83eb40dc6a9ecd3477b8023369d0"
 	ClientServerImage       = "registry.redhat.io/rhtas/client-server-rhel9@sha256:9537329d0166b8d41ffd5f5d79c052fc27abe426a20cba5733c84030013c4e29"
 )
