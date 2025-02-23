@@ -14,7 +14,7 @@ import (
 	"golang.org/x/exp/maps"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
