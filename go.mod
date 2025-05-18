@@ -9,7 +9,7 @@ require (
 	github.com/go-logr/logr v1.4.1
 	github.com/google/certificate-transparency-go v1.1.7
 	github.com/google/go-containerregistry v0.20.2
-	github.com/google/trillian v1.6.0
+	github.com/google/trillian v1.7.2
 	github.com/google/uuid v1.6.0
 	github.com/onsi/ginkgo/v2 v2.17.1
 	github.com/onsi/gomega v1.32.0
