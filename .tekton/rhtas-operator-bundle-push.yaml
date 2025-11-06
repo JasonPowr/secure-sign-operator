@@ -2,7 +2,7 @@ apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   annotations:
-    build.appstudio.openshift.io/repo: https://github.com/securesign/secure-sign-operator?rev={{revision}}
+    build.appstudio.openshift.io/repo: https://github.com/JasonPowr/secure-sign-operator?rev={{revision}}
     build.appstudio.redhat.com/commit_sha: '{{revision}}'
     build.appstudio.redhat.com/target_branch: '{{target_branch}}'
     pipelinesascode.tekton.dev/max-keep-runs: "3"
@@ -15,11 +15,11 @@ metadata:
       || "go.mod".pathChanged() || "go.sum".pathChanged())
   creationTimestamp: null
   labels:
-    appstudio.openshift.io/application: operator
-    appstudio.openshift.io/component: rhtas-operator-bundle
+    appstudio.openshift.io/application: operator-japower
+    appstudio.openshift.io/component: rhtas-operator-bundle-japower
     pipelines.appstudio.openshift.io/type: build
   name: rhtas-operator-bundle-on-push
-  namespace: rhtas-tenant
+  namespace: rhtas-dev-tenant
 spec:
   params:
   - name: git-url
@@ -39,7 +39,7 @@ spec:
   - name: prefetch-input
     value: '{"type": "generic", "path": "."}'
   - name: manager-pipelinerun-selector
-    value: appstudio.openshift.io/application=operator,appstudio.openshift.io/component=rhtas-operator,pipelinesascode.tekton.dev/sha={{revision}},pipelinesascode.tekton.dev/event-type in (push,incoming)
+    value: appstudio.openshift.io/application=operator-japower,appstudio.openshift.io/component=rhtas-operator-japower,pipelinesascode.tekton.dev/sha={{revision}},pipelinesascode.tekton.dev/event-type in (push,incoming)
   - name: manager-registry-url
     value: registry.redhat.io/rhtas/rhtas-rhel9-operator
   pipelineRef:

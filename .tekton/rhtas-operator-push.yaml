@@ -2,7 +2,7 @@ apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   annotations:
-    build.appstudio.openshift.io/repo: https://github.com/securesign/secure-sign-operator?rev={{revision}}
+    build.appstudio.openshift.io/repo: https://github.com/JasonPowr/secure-sign-operator?rev={{revision}}
     build.appstudio.redhat.com/commit_sha: '{{revision}}'
     build.appstudio.redhat.com/target_branch: '{{target_branch}}'
     pipelinesascode.tekton.dev/max-keep-runs: "3"
@@ -15,11 +15,11 @@ metadata:
       || "go.mod".pathChanged() || "go.sum".pathChanged())
   creationTimestamp: null
   labels:
-    appstudio.openshift.io/application: operator
-    appstudio.openshift.io/component: rhtas-operator
+    appstudio.openshift.io/application: operator-japower
+    appstudio.openshift.io/component: rhtas-operator-japower
     pipelines.appstudio.openshift.io/type: build
   name: rhtas-operator-on-push
-  namespace: rhtas-tenant
+  namespace: rhtas-dev-tenant
 spec:
   params:
   - name: git-url
