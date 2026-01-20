@@ -69,6 +69,7 @@ func (i deployAction) Handle(ctx context.Context, instance *rhtasv1alpha1.Rekor)
 		},
 		i.ensureRedisDeployment(instance, actions.RBACRedisName, labels),
 		deployment.TrustedCA(instance.GetTrustedCA(), actions.RedisDeploymentName, actions.RedisDeploymentName),
+		deployment.GoDebugFIPSOnly(),
 		ensure.Optional(statusTLS(instance).CertRef != nil, i.ensureTLS(statusTLS(instance), caPath)),
 		ensure.ControllerReference[*v1.Deployment](instance, i.Client),
 		ensure.Labels[*v1.Deployment](slices.Collect(maps.Keys(labels)), labels),

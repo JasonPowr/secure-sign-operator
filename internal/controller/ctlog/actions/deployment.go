@@ -89,6 +89,7 @@ func (i deployAction) Handle(ctx context.Context, instance *rhtasv1alpha1.CTlog)
 		ensure.Labels[*v1.Deployment](slices.Collect(maps.Keys(labels)), labels),
 		deployment.Proxy(),
 		deployment.TrustedCA(instance.GetTrustedCA(), containerName),
+		deployment.GoDebugFIPSOnly(),
 		deployment.PodRequirements(instance.Spec.PodRequirements, containerName),
 		ensure.Optional(
 			utils.TlsEnabled(instance),

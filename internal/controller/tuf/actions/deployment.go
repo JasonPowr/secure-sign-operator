@@ -61,6 +61,7 @@ func (i deployAction) Handle(ctx context.Context, instance *rhtasv1alpha1.Tuf) *
 		deployment.Proxy(),
 		deployment.PodRequirements(instance.Spec.PodRequirements, tufConstants.ContainerName),
 		deployment.PodSecurityContext(),
+		deployment.GoDebugFIPSOnly(),
 	); err != nil {
 		return i.Error(ctx, fmt.Errorf("could not create TUF: %w", err), instance)
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/securesign/operator/api/v1alpha1"
 	testAction "github.com/securesign/operator/internal/testing/action"
+	cryptoutil "github.com/securesign/operator/internal/utils/crypto"
 	"github.com/securesign/operator/internal/utils/kubernetes"
 	"github.com/securesign/operator/internal/utils/tls"
 	v1 "k8s.io/api/apps/v1"
@@ -19,6 +20,60 @@ import (
 )
 
 const name = "dp"
+
+func TestGoDebugFIPSOnly(t *testing.T) {
+	t.Run("adds or replaces fips140 setting", func(t *testing.T) {
+		ctx := context.TODO()
+		g := gomega.NewWithT(t)
+
+		old := cryptoutil.FIPSEnabled
+		cryptoutil.FIPSEnabled = true
+		t.Cleanup(func() { cryptoutil.FIPSEnabled = old })
+
+		c := testAction.FakeClientBuilder().
+			WithObjects(&v1.Deployment{
+				ObjectMeta: v2.ObjectMeta{Name: name, Namespace: "default"},
+				Spec: v1.DeploymentSpec{
+					Template: core.PodTemplateSpec{
+						Spec: core.PodSpec{
+							Containers: []core.Container{
+								{
+									Name: name,
+									Env: []core.EnvVar{
+										{Name: "GODEBUG", Value: "gctrace=1,fips140=auto,foo=bar"},
+									},
+								},
+								{
+									Name: "other",
+									Env: []core.EnvVar{
+										{Name: "GODEBUG", Value: "foo=bar"},
+									},
+								},
+							},
+						},
+					},
+				},
+			}).
+			Build()
+
+		result, err := kubernetes.CreateOrUpdate(ctx, c,
+			&v1.Deployment{ObjectMeta: v2.ObjectMeta{Name: name, Namespace: "default"}},
+			GoDebugFIPSOnly(name),
+		)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		g.Expect(result).To(gomega.Equal(controllerutil.OperationResultUpdated))
+
+		existing := &v1.Deployment{}
+		g.Expect(c.Get(ctx, client.ObjectKey{Namespace: "default", Name: name}, existing)).To(gomega.Succeed())
+
+		g.Expect(existing.Spec.Template.Spec.Containers).To(gomega.HaveLen(2))
+		g.Expect(existing.Spec.Template.Spec.Containers[0].Name).To(gomega.Equal(name))
+		g.Expect(existing.Spec.Template.Spec.Containers[0].Env).To(gomega.ContainElement(core.EnvVar{Name: "GODEBUG", Value: "fips140=only,gctrace=1,foo=bar"}))
+
+		g.Expect(existing.Spec.Template.Spec.Containers[1].Name).To(gomega.Equal("other"))
+		g.Expect(existing.Spec.Template.Spec.Containers[1].Env).To(gomega.ContainElement(core.EnvVar{Name: "GODEBUG", Value: "foo=bar"}))
+	})
+}
 
 func TestEnsureTrustedCA(t *testing.T) {
 	t.Run("update existing object", func(t *testing.T) {

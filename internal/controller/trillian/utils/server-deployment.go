@@ -28,6 +28,7 @@ func EnsureServerDeployment(instance *v1alpha1.Trillian, labels map[string]strin
 		ensureProbes(actions.LogserverDeploymentName),
 		deployment.PodRequirements(instance.Spec.LogServer.PodRequirements, actions.LogserverDeploymentName),
 		deployment.Proxy(),
+		deployment.GoDebugFIPSOnly(),
 		deployment.TrustedCA(instance.GetTrustedCA(), actions.LogserverDeploymentName)},
 		EnsureDB(instance, actions.LogserverDeploymentName, caPath)...)
 }
@@ -43,6 +44,7 @@ func EnsureSignerDeployment(instance *v1alpha1.Trillian, labels map[string]strin
 		ensureProbes(actions.LogsignerDeploymentName),
 		deployment.PodRequirements(instance.Spec.LogSigner.PodRequirements, actions.LogsignerDeploymentName),
 		deployment.Proxy(),
+		deployment.GoDebugFIPSOnly(),
 		deployment.TrustedCA(instance.GetTrustedCA(), actions.LogsignerDeploymentName),
 	},
 		EnsureDB(instance, actions.LogsignerDeploymentName, caPath)...)

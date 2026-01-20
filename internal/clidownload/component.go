@@ -12,6 +12,7 @@ import (
 	cutils "github.com/securesign/operator/internal/utils"
 	"github.com/securesign/operator/internal/utils/kubernetes"
 	"github.com/securesign/operator/internal/utils/kubernetes/ensure"
+	"github.com/securesign/operator/internal/utils/kubernetes/ensure/deployment"
 
 	"github.com/go-logr/logr"
 	consolev1 "github.com/openshift/api/console/v1"
@@ -98,6 +99,7 @@ func (c *Component) Start(ctx context.Context) error {
 				Namespace: cliServerNs,
 			}},
 		c.ensureDeployment(labels),
+		deployment.GoDebugFIPSOnly(),
 		ensure.Labels[*apps.Deployment](slices.Collect(maps.Keys(labels)), labels)); e != nil {
 		return e
 	}
