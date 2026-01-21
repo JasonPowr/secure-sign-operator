@@ -100,7 +100,7 @@ func (t *remoteTarPipe) initReadFrom(n uint64) {
 	options := &corev1.PodExecOptions{
 		Container: t.pod.Spec.Containers[0].Name,
 		Command:   []string{"tar", "cf", "-", "-C", t.srcPath, "."},
-		Stdin:     true,
+		Stdin:     false,
 		Stdout:    true,
 		Stderr:    true,
 		TTY:       false,
@@ -126,7 +126,6 @@ func (t *remoteTarPipe) initReadFrom(n uint64) {
 	go func() {
 		defer func() { _ = t.outStream.Close() }()
 		_ = exec.StreamWithContext(t.ctx, remotecommand.StreamOptions{
-			Stdin:  os.Stdin,
 			Stdout: t.outStream,
 			Stderr: os.Stderr,
 			Tty:    false,

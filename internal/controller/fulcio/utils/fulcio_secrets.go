@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"math/big"
 	"time"
+
+	"github.com/youmark/pkcs8"
 )
 
 type FulcioCertConfig struct {
@@ -44,14 +46,27 @@ func (c FulcioCertConfig) ToData() map[string][]byte {
 }
 
 func CreateCAKey(key *ecdsa.PrivateKey, password []byte) ([]byte, error) {
-	mKey, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, err
-	}
-
-	block, err := x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", mKey, password, x509.PEMCipherAES256) //nolint:staticcheck
-	if err != nil {
-		return nil, err
+	var (
+		block *pem.Block
+	)
+	if len(password) > 0 {
+		der, err := pkcs8.MarshalPrivateKey(key, password, pkcs8.DefaultOpts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt private key (PKCS#8): %w", err)
+		}
+		block = &pem.Block{
+			Type:  "ENCRYPTED PRIVATE KEY",
+			Bytes: der,
+		}
+	} else {
+		der, err := x509.MarshalPKCS8PrivateKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal private key (PKCS#8): %w", err)
+		}
+		block = &pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: der,
+		}
 	}
 
 	var pemData bytes.Buffer
@@ -88,17 +103,53 @@ func CreateFulcioCA(config *FulcioCertConfig) ([]byte, error) {
 	}
 
 	block, _ := pem.Decode(config.PrivateKey)
-	keyBytes := block.Bytes
-	if x509.IsEncryptedPEMBlock(block) { //nolint:staticcheck
-		keyBytes, err = x509.DecryptPEMBlock(block, config.PrivateKeyPassword) //nolint:staticcheck
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode private key")
+	}
+
+	var key *ecdsa.PrivateKey
+	switch block.Type {
+	case "ENCRYPTED PRIVATE KEY":
+		if len(config.PrivateKeyPassword) == 0 {
+			return nil, fmt.Errorf("input private key is encrypted but no password was provided")
+		}
+		parsed, err := pkcs8.ParsePKCS8PrivateKey(block.Bytes, config.PrivateKeyPassword)
 		if err != nil {
 			return nil, err
 		}
-	}
+		var ok bool
+		key, ok = parsed.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("unsupported private key type %T", parsed)
+		}
+	default:
+		keyBytes := block.Bytes
+		if x509.IsEncryptedPEMBlock(block) { //nolint:staticcheck
+			keyBytes, err = x509.DecryptPEMBlock(block, config.PrivateKeyPassword) //nolint:staticcheck
+			if err != nil {
+				return nil, err
+			}
+		}
 
-	key, err := x509.ParseECPrivateKey(keyBytes)
-	if err != nil {
-		return nil, err
+		switch block.Type {
+		case "EC PRIVATE KEY":
+			key, err = x509.ParseECPrivateKey(keyBytes)
+			if err != nil {
+				return nil, err
+			}
+		case "PRIVATE KEY":
+			parsed, err := x509.ParsePKCS8PrivateKey(keyBytes)
+			if err != nil {
+				return nil, err
+			}
+			var ok bool
+			key, ok = parsed.(*ecdsa.PrivateKey)
+			if !ok {
+				return nil, fmt.Errorf("unsupported private key type %T", parsed)
+			}
+		default:
+			return nil, fmt.Errorf("unsupported private key PEM type: %s", block.Type)
+		}
 	}
 
 	notBefore := time.Now()

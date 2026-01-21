@@ -3,7 +3,6 @@ package utils
 import (
 	"bytes"
 	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"github.com/google/certificate-transparency-go/trillian/ctfe/configpb"
 	"github.com/google/trillian/crypto/keyspb"
 	"github.com/securesign/operator/internal/utils"
+	"github.com/youmark/pkcs8"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -31,8 +31,6 @@ const (
 	// This is hardcoded since this is where we mount the certs in the
 	// container.
 	rootsPemFileDir = "/ctfe-keys/"
-	// This file contains the private key for the CTLog
-	privateKeyFile = "/ctfe-keys/private"
 )
 
 var supportedCurves = map[string]elliptic.Curve{
@@ -100,13 +98,19 @@ func (c *Config) MarshalConfig() ([]byte, error) {
 		return nil, fmt.Errorf("failed to decode private key")
 	}
 
+	privDER, err := privateKeyPEMToDER(c.PrivKey, c.PrivKeyPassword)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load private key: %w", err)
+	}
+
 	proto := configpb.LogConfig{
 		LogId:        c.LogID,
 		Prefix:       c.LogPrefix,
 		RootsPemFile: rootPems,
-		PrivateKey: mustMarshalAny(&keyspb.PEMKeyFile{
-			Path:     privateKeyFile,
-			Password: string(c.PrivKeyPassword)}),
+		// Embed key material directly; Trillian's PEMKeyFile support only handles
+		// legacy PEM encryption via x509.DecryptPEMBlock and will fail on PKCS#8
+		// "ENCRYPTED PRIVATE KEY" blocks.
+		PrivateKey:    mustMarshalAny(&keyspb.PrivateKey{Der: privDER}),
 		PublicKey:      &keyspb.PublicKey{Der: block.Bytes},
 		LogBackendName: "trillian",
 		ExtKeyUsages:   []string{"CodeSigning"},
@@ -130,6 +134,44 @@ func (c *Config) MarshalConfig() ([]byte, error) {
 	return marshalledConfig, nil
 }
 
+func privateKeyPEMToDER(pemBytes []byte, password []byte) ([]byte, error) {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode private key PEM")
+	}
+
+	switch block.Type {
+	case "ENCRYPTED PRIVATE KEY":
+		if len(password) == 0 {
+			return nil, fmt.Errorf("encrypted private key but no password was provided")
+		}
+		key, err := pkcs8.ParsePKCS8PrivateKey(block.Bytes, password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt private key: %w", err)
+		}
+		der, err := x509.MarshalPKCS8PrivateKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal decrypted private key: %w", err)
+		}
+		return der, nil
+	default:
+		// Legacy OpenSSL PEM encryption (Proc-Type/DEK-Info) wraps the DER bytes.
+		if x509.IsEncryptedPEMBlock(block) { //nolint:staticcheck
+			if len(password) == 0 {
+				return nil, fmt.Errorf("encrypted private key but no password was provided")
+			}
+			der, err := x509.DecryptPEMBlock(block, password) //nolint:staticcheck
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt private key: %w", err)
+			}
+			return der, nil
+		}
+
+		// Unencrypted PEM key (PKCS#8, SEC1, PKCS#1) - return DER directly.
+		return block.Bytes, nil
+	}
+}
+
 func mustMarshalAny(pb proto.Message) *anypb.Any {
 	ret, err := anypb.New(pb)
 	if err != nil {
@@ -145,26 +187,54 @@ func createConfigWithKeys(certConfig *KeyConfig) (*Config, error) {
 	if certConfig.PrivateKeyPass != nil {
 		config.PrivKeyPassword = certConfig.PrivateKeyPass
 		config.PrivKey = certConfig.PrivateKey
-	} else {
-		// private key MUST be encrypted by password
-		config.PrivKeyPassword = utils.GeneratePassword(8)
-		block, _ := pem.Decode(certConfig.PrivateKey)
-		if block == nil {
-			return nil, fmt.Errorf("failed to decode private key")
-		}
-		// Encrypt the pem
-		encryptedBlock, err := x509.EncryptPEMBlock(rand.Reader, block.Type, block.Bytes, config.PrivKeyPassword, x509.PEMCipherAES256) // nolint
-		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt private key: %w", err)
-		}
-
-		privPEM := pem.EncodeToMemory(encryptedBlock)
-		if privPEM == nil {
-			return nil, fmt.Errorf("failed to encode encrypted private key")
-		}
-		config.PrivKey = privPEM
-
+		return config, nil
 	}
+
+	// private key MUST be encrypted by password
+	config.PrivKeyPassword = utils.GeneratePassword(8)
+	block, _ := pem.Decode(certConfig.PrivateKey)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode private key")
+	}
+
+	var privKey any
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		k, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse RSA private key: %w", err)
+		}
+		privKey = k
+	case "EC PRIVATE KEY":
+		k, err := x509.ParseECPrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse EC private key: %w", err)
+		}
+		privKey = k
+	case "PRIVATE KEY":
+		k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse PKCS#8 private key: %w", err)
+		}
+		privKey = k
+	case "ENCRYPTED PRIVATE KEY":
+		return nil, fmt.Errorf("input private key is already encrypted but no password was provided")
+	default:
+		return nil, fmt.Errorf("unsupported private key PEM type: %s", block.Type)
+	}
+	der, err := pkcs8.MarshalPrivateKey(privKey, config.PrivKeyPassword, pkcs8.DefaultOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt private key (PKCS#8): %w", err)
+	}
+
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "ENCRYPTED PRIVATE KEY",
+		Bytes: der,
+	})
+	if privPEM == nil {
+		return nil, fmt.Errorf("failed to encode encrypted private key")
+	}
+	config.PrivKey = privPEM
 	return config, nil
 }
 

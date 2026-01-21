@@ -8,6 +8,8 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+
+	"github.com/youmark/pkcs8"
 )
 
 const (
@@ -35,26 +37,31 @@ func CreatePrivateKey(password []byte) (*KeyConfig, error) {
 		return nil, fmt.Errorf("failed to generate private key: %w", err)
 	}
 
-	mKey, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, err
-	}
-
 	var block *pem.Block
 	if len(password) > 0 {
-		block, err = x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", mKey, password, x509.PEMCipherAES256) //nolint:staticcheck
-	} else {
+		der, err := pkcs8.MarshalPrivateKey(key, password, pkcs8.DefaultOpts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt private key (PKCS#8): %w", err)
+		}
+
 		block = &pem.Block{
-			Type:  "EC PRIVATE KEY",
-			Bytes: mKey,
+			Type:  "ENCRYPTED PRIVATE KEY",
+			Bytes: der,
+		}
+	} else {
+		der, err := x509.MarshalPKCS8PrivateKey(key)
+		if err != nil {
+			return nil, err
+		}
+
+		block = &pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: der,
 		}
 	}
-	if err != nil {
-		return nil, err
-	}
+
 	var pemKey bytes.Buffer
-	err = pem.Encode(&pemKey, block)
-	if err != nil {
+	if err := pem.Encode(&pemKey, block); err != nil {
 		return nil, err
 	}
 
@@ -64,11 +71,10 @@ func CreatePrivateKey(password []byte) (*KeyConfig, error) {
 	}
 
 	var pemPubKey bytes.Buffer
-	err = pem.Encode(&pemPubKey, &pem.Block{
+	if err := pem.Encode(&pemPubKey, &pem.Block{
 		Type:  "PUBLIC KEY",
 		Bytes: mPubKey,
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
 
@@ -90,21 +96,32 @@ func GeneratePublicKey(certConfig *KeyConfig) (*KeyConfig, error) {
 		return nil, fmt.Errorf("failed to decode private key")
 	}
 
-	if x509.IsEncryptedPEMBlock(privatePEMBlock) { //nolint:staticcheck
-		if certConfig.PrivateKeyPass == nil {
+	switch privatePEMBlock.Type {
+	case "ENCRYPTED PRIVATE KEY":
+		if len(certConfig.PrivateKeyPass) == 0 {
 			return nil, fmt.Errorf("can't find private key password")
 		}
-		privatePEMBlock.Bytes, err = x509.DecryptPEMBlock(privatePEMBlock, certConfig.PrivateKeyPass) //nolint:staticcheck
-		if err != nil {
+		if priv, err = pkcs8.ParsePKCS8PrivateKey(privatePEMBlock.Bytes, certConfig.PrivateKeyPass); err != nil {
 			return nil, fmt.Errorf("failed to decrypt private key: %w", err)
 		}
-	}
+	default:
+		der := privatePEMBlock.Bytes
+		if x509.IsEncryptedPEMBlock(privatePEMBlock) { //nolint:staticcheck
+			if len(certConfig.PrivateKeyPass) == 0 {
+				return nil, fmt.Errorf("can't find private key password")
+			}
+			der, err = x509.DecryptPEMBlock(privatePEMBlock, certConfig.PrivateKeyPass) //nolint:staticcheck
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt private key: %w", err)
+			}
+		}
 
-	if priv, err = x509.ParsePKCS8PrivateKey(privatePEMBlock.Bytes); err != nil {
-		// Try it as RSA
-		if priv, err = x509.ParsePKCS1PrivateKey(privatePEMBlock.Bytes); err != nil {
-			if priv, err = x509.ParseECPrivateKey(privatePEMBlock.Bytes); err != nil {
-				return nil, fmt.Errorf("failed to parse private key PEM: %w", err)
+		if priv, err = x509.ParsePKCS8PrivateKey(der); err != nil {
+			// Try it as RSA
+			if priv, err = x509.ParsePKCS1PrivateKey(der); err != nil {
+				if priv, err = x509.ParseECPrivateKey(der); err != nil {
+					return nil, fmt.Errorf("failed to parse private key PEM: %w", err)
+				}
 			}
 		}
 	}

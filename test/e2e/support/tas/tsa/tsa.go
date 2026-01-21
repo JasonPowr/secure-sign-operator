@@ -2,6 +2,7 @@ package tsa
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -20,6 +21,7 @@ import (
 	"github.com/securesign/operator/internal/labels"
 	"github.com/securesign/operator/test/e2e/support"
 	"github.com/securesign/operator/test/e2e/support/condition"
+	"github.com/youmark/pkcs8"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -124,22 +126,46 @@ func CreateSecrets(ns string, name string) *v1.Secret {
 	config.LeafPrivateKey = leafPrivateKey
 
 	block, _ := pem.Decode(rootPrivateKey)
-	keyBytes := block.Bytes
-	if x509.IsEncryptedPEMBlock(block) { //nolint:staticcheck
-		keyBytes, err = x509.DecryptPEMBlock(block, []byte(support.CertPassword)) //nolint:staticcheck
+	if block == nil {
+		return nil
+	}
+
+	var rootPrivKey *ecdsa.PrivateKey
+	switch block.Type {
+	case "ENCRYPTED PRIVATE KEY":
+		parsed, err := pkcs8.ParsePKCS8PrivateKey(block.Bytes, []byte(support.CertPassword))
 		if err != nil {
 			return nil
 		}
-	}
-
-	rootPrivKey, err := x509.ParseECPrivateKey(keyBytes)
-	if err != nil {
+		var ok bool
+		rootPrivKey, ok = parsed.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil
+		}
+	case "EC PRIVATE KEY":
+		rootPrivKey, err = x509.ParseECPrivateKey(block.Bytes)
+		if err != nil {
+			return nil
+		}
+	case "PRIVATE KEY":
+		parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil
+		}
+		var ok bool
+		rootPrivKey, ok = parsed.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil
+		}
+	default:
 		return nil
 	}
 
 	block, _ = pem.Decode(intermediatePublicKey)
-	keyBytes = block.Bytes
-	interPubKey, err := x509.ParsePKIXPublicKey(keyBytes)
+	if block == nil {
+		return nil
+	}
+	interPubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
 		return nil
 	}
@@ -156,8 +182,10 @@ func CreateSecrets(ns string, name string) *v1.Secret {
 	}
 
 	block, _ = pem.Decode(leafPublicKey)
-	keyBytes = block.Bytes
-	leafPuKey, err := x509.ParsePKIXPublicKey(keyBytes)
+	if block == nil {
+		return nil
+	}
+	leafPuKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
 		return nil
 	}

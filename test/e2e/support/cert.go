@@ -9,6 +9,8 @@ import (
 	"encoding/pem"
 	"math/big"
 	"time"
+
+	"github.com/youmark/pkcs8"
 )
 
 const CertPassword = "LetMeIn123"
@@ -26,9 +28,13 @@ func CreateCertificates(passwordProtected bool) ([]byte, []byte, []byte, error) 
 	}
 	var block *pem.Block
 	if passwordProtected {
-		block, err = x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", privateKeyBytes, []byte(CertPassword), x509.PEMCipher3DES) //nolint:staticcheck
+		der, err := pkcs8.MarshalPrivateKey(key, []byte(CertPassword), pkcs8.DefaultOpts)
 		if err != nil {
 			return nil, nil, nil, err
+		}
+		block = &pem.Block{
+			Type:  "ENCRYPTED PRIVATE KEY",
+			Bytes: der,
 		}
 	} else {
 		block = &pem.Block{

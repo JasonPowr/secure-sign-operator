@@ -18,6 +18,7 @@ import (
 
 	rhtasv1alpha1 "github.com/securesign/operator/api/v1alpha1"
 	"github.com/securesign/operator/internal/utils/kubernetes"
+	"github.com/youmark/pkcs8"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -69,14 +70,25 @@ func (c TsaCertChainConfig) ToMap() map[string][]byte {
 }
 
 func CreatePrivateKey(key *ecdsa.PrivateKey, password []byte) ([]byte, error) {
-	mKey, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, err
-	}
-
-	block, err := x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", mKey, password, x509.PEMCipherAES256) //nolint:staticcheck
-	if err != nil {
-		return nil, err
+	var block *pem.Block
+	if len(password) > 0 {
+		der, err := pkcs8.MarshalPrivateKey(key, password, pkcs8.DefaultOpts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt private key (PKCS#8): %w", err)
+		}
+		block = &pem.Block{
+			Type:  "ENCRYPTED PRIVATE KEY",
+			Bytes: der,
+		}
+	} else {
+		der, err := x509.MarshalPKCS8PrivateKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal private key (PKCS#8): %w", err)
+		}
+		block = &pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: der,
+		}
 	}
 
 	var pemData bytes.Buffer
@@ -205,6 +217,31 @@ func parsePrivateKey(privateKeyPEM []byte, password []byte) (crypto.PrivateKey, 
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}
 
+	if block.Type == "ENCRYPTED PRIVATE KEY" {
+		// PKCS#8 encrypted private key (PBES2). Use pkcs8 to decrypt+parse.
+		if len(password) > 0 {
+			privateKey, err = pkcs8.ParsePKCS8PrivateKey(block.Bytes, password)
+		} else {
+			// Backward compatible: if this was mistakenly stored unencrypted under
+			// ENCRYPTED PRIVATE KEY, pkcs8 will still parse it without password.
+			privateKey, err = pkcs8.ParsePKCS8PrivateKey(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("encrypted private key but no password was provided")
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt private key: %w", err)
+		}
+		switch pk := privateKey.(type) {
+		case *rsa.PrivateKey:
+			return pk, nil
+		case *ecdsa.PrivateKey:
+			return pk, nil
+		default:
+			return nil, fmt.Errorf("unknown private key type %T", privateKey)
+		}
+	}
+
 	keyBytes := block.Bytes
 	if x509.IsEncryptedPEMBlock(block) { //nolint:staticcheck
 		keyBytes, err = x509.DecryptPEMBlock(block, password) //nolint:staticcheck
@@ -227,7 +264,7 @@ func parsePrivateKey(privateKeyPEM []byte, password []byte) (crypto.PrivateKey, 
 	case *ecdsa.PrivateKey:
 		return pk, nil
 	default:
-		return nil, fmt.Errorf("unknown private key type")
+		return nil, fmt.Errorf("unknown private key type %T", privateKey)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"math/big"
 	"testing"
 	"time"
+
+	"github.com/youmark/pkcs8"
 )
 
 func GenerateRSAPKCS8PEM(t *testing.T, keyBits int) []byte {
@@ -32,15 +34,20 @@ func GenerateRSAPKCS1PEM(t *testing.T, keyBits int) []byte {
 
 func GenerateEncryptedRSAPEM(t *testing.T, keyBits int) ([]byte, []byte) {
 	t.Helper()
-	der := x509.MarshalPKCS1PrivateKey(mustGenerateRSAKey(t, keyBits))
+
+	key := mustGenerateRSAKey(t, keyBits)
 	password := []byte("pass")
-	block, _ := x509.EncryptPEMBlock( //nolint:staticcheck
-		rand.Reader,
-		"RSA PRIVATE KEY",
-		der,
-		password,
-		x509.PEMCipherAES256,
-	)
+
+	der, err := pkcs8.MarshalPrivateKey(key, password, pkcs8.DefaultOpts)
+	if err != nil {
+		t.Fatalf("failed to encrypt RSA private key (PKCS#8): %v", err)
+	}
+
+	block := &pem.Block{
+		Type:  "ENCRYPTED PRIVATE KEY",
+		Bytes: der,
+	}
+
 	return pem.EncodeToMemory(block), password
 }
 
@@ -82,9 +89,13 @@ func GenerateECCertificatePEM(passwordProtected bool, certPassword string, curve
 	}
 	var block *pem.Block
 	if passwordProtected {
-		block, err = x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", privateKeyBytes, []byte(certPassword), x509.PEMCipher3DES) //nolint:staticcheck
+		der, err := pkcs8.MarshalPrivateKey(key, []byte(certPassword), pkcs8.DefaultOpts)
 		if err != nil {
 			return nil, nil, nil, err
+		}
+		block = &pem.Block{
+			Type:  "ENCRYPTED PRIVATE KEY",
+			Bytes: der,
 		}
 	} else {
 		block = &pem.Block{

@@ -15,6 +15,7 @@ import (
 
 	"github.com/securesign/operator/api/v1alpha1"
 	"github.com/securesign/operator/internal/utils/kubernetes"
+	"github.com/youmark/pkcs8"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -72,6 +73,17 @@ func ValidatePrivateKeyPEM(pemBytes []byte, password []byte) error {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
 		return ErrInvalidPEM
+	}
+
+	if block.Type == "ENCRYPTED PRIVATE KEY" {
+		if len(password) == 0 {
+			return ErrNoPassword
+		}
+		key, err := pkcs8.ParsePKCS8PrivateKey(block.Bytes, password)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrFailedToDecrypt, err)
+		}
+		return validatePrivateKeyType(key)
 	}
 
 	der := block.Bytes
